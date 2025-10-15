@@ -19,21 +19,11 @@ function main()
         "indep-gauss",
         "hess-gauss",
         "laplace-gauss",
-        "laplace-GPreg-gauss",
     ]
     
     case = cases[2]
     
-    # get_weights(model, i) = model[i].weight
-    # get_biases(model, i) = model[i].bias
-    # get_flat_params_per_layer(model) = [
-    #     reduce(vcat, [vec(get_weights(model, i)), get_biases(model, i)])
-    #     for i in 1:length(model)
-    #      ]       
-    # get_flat_params(model) = reduce(vcat, get_flat_params_per_layer(model))
-    
-    # # fieldnames(Dense) = (:weight, :bias, :σ)
-    # w = get_flat_params(model)
+    @info "Creating ensemble with method $(case)"
     
     n_samples = 100
     model_copies = [deepcopy(model) for i in 1:n_samples]
@@ -54,7 +44,7 @@ function main()
     elseif case == "hess-gauss"
 
         # how to scale the hessian to create the ensemble
-        scale = FT(0.01)
+        scale = FT(0.02)
 
         
         flat_params, reconstructor = Flux.destructure(model)
@@ -64,14 +54,17 @@ function main()
         # use hessian to define a covariance around the parameters
         Hs = zeros(FT, Np, Np)
         for (id,x) in enumerate(xs)
-            @info "iter $id / $(length(xs))"
+            if id % 10 ==0
+                @info "iter $id / $(length(xs))"
+            end
             Hs .+= 1/length(xs) * Zygote.hessian(p -> reconstruct_at_x(p,[x])[1], flat_params)
         end
         # Hs conditioning is bad. #4353 x 4353 mat with 245 nonzero s.v's
         svdh = svd(Hs)
         threshold = FT(1/1000)
         K = findfirst(x -> x < svdh.S[1]*threshold, svdh.S) - 1 # last index above threshold
-
+        @info "truncate at $K, with threshold $threshold"
+        
         sqrt_cov_mat = svdh.U[:,1:K]*Diagonal(1 ./ sqrt.(svdh.S[1:K])) * svdh.Vt[1:K,:]
       
         samples = flat_params .+ scale*sqrt_cov_mat*rand(MvNormal(zeros(Np),I), n_samples)
@@ -87,7 +80,7 @@ function main()
     elseif case == "laplace-gauss"
         # use the Generalized Gauss-Newton (Martens 20202) approximation of the hessian
         
-        Γ = 0.001*I # defines a scaling via the "noise" (NB this "I" is just 1D)
+        Γ = 0.005*I # defines a scaling via the "noise" (NB this "I" is just 1D)
         H = inv(Γ)
         
         # get the gradient at the optimal value, at given points "x"
@@ -102,7 +95,9 @@ function main()
         GGN = zeros(FT, Np , Np)
         J = zeros(FT, 1, Np)
         for (id,x) in enumerate(xs)
-            @info "iter $id / $(length(xs))"           
+            if id % 10 ==0
+                @info "iter $id / $(length(xs))"
+            end
             J[1,:] .= Zygote.gradient(p -> reconstruct_at_x(p,[x])[1], flat_params)[1]
             GGN .+= 1/length(xs) * J' * H * J
         end
@@ -116,51 +111,6 @@ function main()
         sqrt_cov_mat = svdG.U[:,1:K]*Diagonal(1 ./ sqrt.(svdG.S[1:K])) * svdG.Vt[1:K,:]
 
         samples = flat_params .+ sqrt_cov_mat*rand(MvNormal(zeros(Np),I), n_samples)
-        
-        for i in 1:n_samples
-            mod = model_copies[i]
-            mod_tmp = reconstructor(samples[:,i])
-            for (layer, layer_tmp) in zip(mod, mod_tmp)
-                layer.weight .= layer_tmp.weight 
-                layer.bias .= layer_tmp.bias
-            end
-        end
-        
-    elseif case == "laplace-GPreg-gauss"
-        # similar to the above, but define the precision w.r.t a prior (i.e a Gaussian process kernel regularization
-        Γ = 0.1*I
-        H = inv(Γ)
-        
-        # get the gradient at the optimal value, at given points "x"
-        flat_params, reconstructor = Flux.destructure(model)
-        # x's
-        xs = FT.(collect(0.0:0.005:1.0))
-        #xs = [FT(0.5)]
-        
-        # pass in as a function over the weights
-        Js = [Zygote.jacobian(p -> reconstruct_at_x(p,[x]), flat_params)[1] for x in xs]
-        GGN = 1/length(xs) * sum([Js[i]' * H * Js[i] for i in length(xs)])
-        
-        function rbf(x, y; l=1.0)
-            r = norm(x - y) 
-            return exp(-r^2 / (2l^2))
-        end
-        
-        Λ = - GGN
-        for (i,x) in enumerate(xs)
-            for (j,y) in enumerate(xs)
-                Λ[i,j] += rbf(x,y)
-            end
-        end
-
-        cov_mat = pinv(Λ)
-        cov_mat = 0.5*(cov_mat+cov_mat')
-        ev = eigvals(cov_mat)
-        me = minimum(ev)
-        λ = abs(min(me,0)) + 1e-8 * maximum(ev)
-        cov_mat += λ*I
-        
-        samples = rand(MvNormal(flat_params,cov_mat), n_samples)
         
         for i in 1:n_samples
             mod = model_copies[i]

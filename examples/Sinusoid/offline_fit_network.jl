@@ -30,8 +30,8 @@ y_train = Float32.(y_train)
 # - Dense(64, 64, relu): Two hidden layers with 64 neurons and ReLU activation.
 # - Dense(64, 1): An output layer with 1 neuron (linear activation by default).
 model = Chain(
-    Dense(1, 64, relu),
-    Dense(64, 64, relu),
+    Dense(1, 64, tanh),
+    Dense(64, 64, tanh),
     Dense(64, 1)
 )
 
@@ -45,7 +45,7 @@ opt = Flux.setup(Adam(),model)
 data = Flux.DataLoader((x_train, y_train), batchsize=32, shuffle=true)
 
 # Train the model over multiple epochs
-epochs = 200
+epochs = 1000
 for epoch in 1:epochs
     Flux.train!(loss, model, data, opt)
 end
