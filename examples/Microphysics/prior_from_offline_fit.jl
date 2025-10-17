@@ -54,20 +54,39 @@ function main()
     if case == "indep-gauss"
         σ_w = FT(0.2) # will be later divided by layer width
         σ_b = FT(0.2)
+        hyperparams = (σ_w = σ_w, σ_b = σ_b)
+        plt_mod = model_copies[1]
         for i in 1:n_samples
             mod = model_copies[i]
+            
             for layer in mod
-            Nl = size(layer.weight,2) # w_ij x_j + b_i (=> j-dim)
+                Nl = size(layer.weight,2) # w_ij x_j + b_i (=> j-dim)
                 layer.weight .+= σ_w / sqrt(Nl) * randn(size(layer.weight))
-                layer.bias .+= σ_b * randn(size(layer.bias))
+                layer.bias .+= σ_b * randn(size(layer.bias))    
+            end
+
+            if i==1
+                for layer in plt_mod
+                    Nl = size(layer.weight,2) # w_ij x_j + b_i (=> j-dim)
+                    layer.weight .= σ_w / sqrt(Nl) * randn(size(layer.weight))
+                    layer.bias .= σ_b * randn(size(layer.bias))
+                end        
             end
         end
+
+        flat_scales, reconstructor = Flux.destructure(plt_mod)
+        
+        hm = heatmap(Diagonal(flat_scales)', size=(1100,1000))
+        savefig(hm, "cov_$(case).png")
+        
         
     elseif case == "hess-gauss"
 
         # how to scale the hessian to create the ensemble
         scale = FT(0.2)
         noise_cov = I(output_dim)
+        threshold = FT(1/1e3)
+        hyperparams = (noise_cov = noise_cov, threshold = threshold)
         noise_cov_inv = inv(noise_cov)
         
         flat_params, reconstructor = Flux.destructure(model)
@@ -87,12 +106,21 @@ function main()
 
         
         svdh = svd(Hs)
-        threshold = FT(1/1000)
+        threshold = FT(1/1e3)
         K = findfirst(x -> x < svdh.S[1]*threshold, svdh.S) - 1 # last index above threshold
         @info "truncate at $K, with threshold $threshold"
+
+        # some diagnostics
+        pp = plot(1:length(svdh.S), svdh.S, label="singular values", lw=3, color=:black, title="Singular values of Hessian $case", yscale=:log10)
+        vline!(pp, [K], color=:red, label="truncation")
+        hline!(pp, [svdh.S[1]*threshold], color=:red, label="")
+        savefig(pp, "sing_val_cov_$(case).png")
+
         
-        hm = heatmap((svdh.U[:,1:K]*Diagonal(1 ./ svdh.S[1:K]) * svdh.Vt[1:K,:])')
+        hm = heatmap((svdh.U[:,1:K]*Diagonal(1 ./ svdh.S[1:K]) * svdh.Vt[1:K,:])', size=(1100,1000))
         savefig(hm, "cov_$(case).png")
+
+        # sample
         sqrt_cov_mat = svdh.U[:,1:K]*Diagonal(1 ./ sqrt.(svdh.S[1:K])) * svdh.Vt[1:K,:]
         
         samples = flat_params .+ scale*sqrt_cov_mat*rand(MvNormal(zeros(Np),I), n_samples)
@@ -110,6 +138,8 @@ function main()
 
         noise_cov = 0.05*I # defines a scaling via the "noise" 
         H = inv(noise_cov)
+        threshold = FT(1/1000)
+        hyperparams = (noise_cov = noise_cov, threshold = threshold)
         
         # get the gradient at the optimal value, at given points "x"
         flat_params, reconstructor = Flux.destructure(model)
@@ -131,14 +161,20 @@ function main()
         GGN = 0.5*(GGN+GGN') # symmetrize after matrix mults
         # Seems like GGN is horribly conditioned. Perhaps because the approximation is not well approximated when the network is not very wide.
         
-        threshold = FT(1/1000)
         svdG = svd(GGN)
         K = findfirst(x -> x < svdG.S[1]*threshold, svdG.S) - 1 # last index above threshold
         @info "truncate at $K, with threshold $threshold"
 
-        hm = heatmap((svdG.U[:,1:K]*Diagonal(1 ./svdG.S[1:K]) * svdG.Vt[1:K,:])')
+        # some diagnostics
+        pp = plot(1:length(svdG.S), svdG.S, label="singular values", lw=3, color=:black,title="Singular values of Hessian: $case", yscale=:log10 )
+        vline!(pp, [K], color=:red, label="truncation")
+        hline!(pp, [svdG.S[1]*threshold], color=:red, label="")
+        savefig(pp, "sing_val_cov_$(case).png")
+        
+        hm = heatmap((svdG.U[:,1:K]*Diagonal(1 ./svdG.S[1:K]) * svdG.Vt[1:K,:])', size=(1100,1000))
         savefig(hm, "cov_$(case).png")
 
+        # sample
         sqrt_cov_mat = svdG.U[:,1:K]*Diagonal(1 ./ sqrt.(svdG.S[1:K])) * svdG.Vt[1:K,:]
 
         samples = flat_params .+ sqrt_cov_mat*rand(MvNormal(zeros(FT,Np),I), n_samples)
@@ -153,6 +189,10 @@ function main()
         end
         
     end
+
+    # save model ensemble
+    destructured_model_copies = [Flux.destructure(mc) for mc in model_copies]
+    @save "model_ensemble_$case.jld2" destructured_model_copies hyperparams
     
     # 7. Evaluate and visualize the result
     n_plot = 5000 # number train points
@@ -206,10 +246,6 @@ function main()
     display(p)
     savefig(p, "sampled_prior_projected_$(case).png")
   
-
-    
-    
-   return p 
 end
 
 main()
