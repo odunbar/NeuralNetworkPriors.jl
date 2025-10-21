@@ -1,0 +1,11 @@
+name: eki-race
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - torchvision=0.20.1
+  - torchaudio=2.5.1
+  - pytorch=2.5.1
+  - pytorch-cuda=12.1
+  - mkl=2024.0
+prefix: /home/odunbar/miniconda3/envs/eki-race
