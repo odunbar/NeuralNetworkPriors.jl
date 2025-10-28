@@ -13,7 +13,7 @@ model = re(params)
 
 @load "train_data.jld2" # gives input_train, truth 
 # don't compute hessian etc. at all training data:
-n_full = size(input_train,2)
+n_full = size(input_train,1)
 n_tp = 100 # number train points
 skip = Int(ceil(size(input_train,1)/n_tp))
 tp_idx = 1:skip:size(input_train,1)
@@ -55,7 +55,7 @@ function main()
         σ_w = FT(0.2) # will be later divided by layer width
         σ_b = FT(0.2)
         hyperparams = (σ_w = σ_w, σ_b = σ_b)
-        plt_mod = model_copies[1]
+        plt_mod = deepcopy(model_copies[1])
         for i in 1:n_samples
             mod = model_copies[i]
             
@@ -106,7 +106,6 @@ function main()
 
         
         svdh = svd(Hs)
-        threshold = FT(1/1e3)
         K = findfirst(x -> x < svdh.S[1]*threshold, svdh.S) - 1 # last index above threshold
         @info "truncate at $K, with threshold $threshold"
 
