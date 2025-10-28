@@ -76,7 +76,7 @@ cases = [
 ]
 n_samples = 100
 
-case = cases[1]
+case = cases[3]
 @info "Creating ensemble with method $(case)"
 data_file= "prior_network_generator_$(case).bson"
 @info "saving data in $(data_file)"
@@ -100,7 +100,7 @@ ps_copies = [deepcopy(ps) for i in 1:n_samples]
 
 if case == "indep-gauss"
     σ_w = FT(0.002) # will be later divided by layer width
-    σ_b = FT(0.001)
+    σ_b = FT(0.002)
     hyperparams = (σ_w = σ_w, σ_b = σ_b)
     plt_psc = deepcopy(ps_copies[1])
     for i in 1:n_samples
@@ -143,7 +143,7 @@ if case == "indep-gauss"
 elseif case == "hess-gauss"
         
     # how to scale the hessian to create the ensemble
-        scale = FT(1.0)
+        scale = FT(1)
         noise_cov = I(output_dim)
         threshold = FT(1/1e3)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
@@ -223,7 +223,6 @@ elseif case == "hess-gauss"
         GGN = 0.5*(GGN+GGN') # symmetrize after matrix mults
         # Seems like GGN is horribly conditioned. Perhaps because the approximation is not well approximated when the network is not very wide.
         
-        threshold = FT(1/1000)
         svdG = svd(GGN)
         K = findfirst(x -> x < svdG.S[1]*threshold, svdG.S) - 1 # last index above threshold
         @info "truncate at $K, with threshold $threshold"
@@ -236,7 +235,7 @@ elseif case == "hess-gauss"
         
         hm = heatmap((svdG.U[:,1:K]*Diagonal(1 ./svdG.S[1:K]) * svdG.Vt[1:K,:])', size=(1100,1000))
         savefig(hm, "cov_$(case).png")
-        
+
         #sample
         sqrt_cov_mat = svdG.U[:,1:K]*Diagonal(1 ./ sqrt.(svdG.S[1:K])) * svdG.Vt[1:K,:]
         
@@ -259,33 +258,35 @@ end
 
 
 # 7. Evaluate and visualize the result
-n_plot = 5000 # number train points
-skip_plot = Int(ceil(size(x_train,2)/n_plot))
-plot_idx = 1:skip_plot:size(x_train,2)
+n_err = 5000 # number train points
+skip_err = Int(ceil(size(x_train,2)/n_err))
+plot_idx = 1:skip_err:size(x_train,2)
+n_err = length(plot_idx)
 
-x_plot = x_train[:,plot_idx]'
-truth_plot = data_train[:,plot_idx]'
+
+x_err = x_train[:,plot_idx]'
+truth_err = data_train[:,plot_idx]'
 
 # predicts rows, then rotate so columns are different curves
-y_pred = zeros(FT, n_samples, output_dim, size(x_plot,1))
-orig_model_plot= zeros(FT, output_dim, size(x_plot,1))
+y_pred = zeros(FT, n_samples, output_dim, size(x_err,1))
+orig_model_err= zeros(FT, output_dim, size(x_err,1))
 for (id,psc) in enumerate(ps_copies)
-    for (i,x) in enumerate(eachrow(x_plot))
+    for (i,x) in enumerate(eachrow(x_err))
         y_pred[id,:,i] = Lux.apply(mlnn_tmp.model, vec(x'), psc, mlnn_tmp.st)[1]
         if id == 1
-            orig_model_plot[:,i] = Lux.apply(mlnn.model, vec(x'), ps, mlnn.st)[1]
+            orig_model_err[:,i] = Lux.apply(mlnn.model, vec(x'), ps, mlnn.st)[1]
         end
     end
     
 end
 
-mse_ens = 1/(n_samples*n_plot*output_dim) * sum([norm(yp - truth_plot') for yp in eachslice(y_pred,dims=1)])
+mse_ens = 1/(n_samples*n_err*output_dim) * sum([norm(yp - truth_err') for yp in eachslice(y_pred,dims=1)])
 meanyp = mean(y_pred, dims=1)[1,:,:]
-mse_mean = 1/(n_plot*output_dim) * norm(meanyp - truth_plot')
-spread_ens = 1/(n_plot*output_dim) * [norm(yp - meanyp) for yp in eachslice(y_pred,dims=1)]
+mse_mean = 1/(n_err*output_dim) * norm(meanyp - truth_err')
+spread_ens = 1/(n_err*output_dim) * [norm(yp - meanyp) for yp in eachslice(y_pred,dims=1)]
 spread_mean = 1/(n_samples) * sum(spread_ens)
 spread_diff = maximum(spread_ens) - minimum(spread_ens)
-mse_model = 1/(n_plot*output_dim) * norm(orig_model_plot - truth_plot')
+mse_model = 1/(n_err*output_dim) * norm(orig_model_err - truth_err')
 @info "mean-MSE over ensemble $mse_ens"
 @info "MSE of ensemble-mean, $mse_mean"
 @info "MSE of model, $mse_model"
@@ -293,5 +294,44 @@ mse_model = 1/(n_plot*output_dim) * norm(orig_model_plot - truth_plot')
 @info "max-min spread of ensemble, $spread_diff"
 
 
+# plots against "z_obu"
+n_plot = 1000 # discretization 
+skip_plot = Int(ceil(size(x_train,2)/n_plot))
+plot_idx = 1:skip_plot:size(x_train,2)
+n_plot = length(plot_idx)
 
+z_id= findfirst(i->i=="z_obu", X_vars)
+
+x_plot = zeros(FT, n_plot, size(x_train,1))
+for (ri,row) in enumerate(eachrow(x_train[:,plot_idx]))
+    if ri == z_id
+        minr = minimum(row) 
+        maxr = maximum(row)
+        zero_to_one =  (plot_idx .- 1) ./ maximum(plot_idx.-1)
+        x_plot[:,ri] .= minr .+ zero_to_one * (maxr - minr)# save as cols in x_plot
+    else
+        x_plot[:,ri] .= mean(row)
+    end
+end
+
+y_plot = zeros(FT, n_samples, size(x_plot,1))
+orig_model_plot= zeros(FT, size(x_plot,1))
+for (id,psc) in enumerate(ps_copies)
+    for (i,x) in enumerate(eachrow(x_plot))
+        y_plot[id,i:i] .= Lux.apply(mlnn_tmp.model, vec(x'), psc, mlnn_tmp.st)[1]
+        if id == 1
+            orig_model_plot[i:i] = Lux.apply(mlnn.model, vec(x'), ps, mlnn.st)[1]
+        end
+    end
+end
+
+
+p = plot(-x_plot[:,z_id].+ 1e16*eps(), orig_model_plot, label="True function", lw=2, color=:blue, xscale=:log10)
+plot!(p, -x_plot[:, z_id].+ 1e16*eps(), y_plot', label="", lw=2, color=:grey, alpha=0.3)
+
+xlabel!("|z_obu|")
+ylabel!("y")
+title!("DNN ensemble, $(case)")
+display(p)
+savefig(p, "sampled_prior_$(case).png")
 
