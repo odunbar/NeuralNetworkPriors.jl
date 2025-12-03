@@ -68,8 +68,8 @@ function main()
             if i==1
                 for layer in plt_mod
                     Nl = size(layer.weight,2) # w_ij x_j + b_i (=> j-dim)
-                    layer.weight .= σ_w / sqrt(Nl) * randn(size(layer.weight))
-                    layer.bias .= σ_b * randn(size(layer.bias))
+                    layer.weight .= σ_w / sqrt(Nl) * ones(size(layer.weight))
+                    layer.bias .= σ_b * ones(size(layer.bias))
                 end        
             end
         end
