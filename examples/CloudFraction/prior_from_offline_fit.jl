@@ -7,11 +7,27 @@ using Zygote
 using JLD2 #(loading)
 using Plots
 using TSVD
+using BSON
 
-@load "pretrained_NN.jld2" # give re, params,
+
+nn_filename = "cloud_fraction_NN_v1"
+if !isfile("$(nn_filename).bson")
+    jld2data = JLD2.load("$(nn_filename).jld2") # give re, params,
+    re = jld2data["re"]
+    params = jld2data["params"]
+    BSON.@save "$(nn_filename).bson" re params
+else
+    BSON.@load "$(nn_filename).bson" re params
+end
 model = re(params)
 
-@load "train_data.jld2" # gives input_train, truth 
+FT = Float32
+
+
+df = CSV.read("sample_pi_groups.csv", DataFrame)
+input_train = FT.(Matrix(df)[:,1:4])
+truth = FT.(reshape(Matrix(df)[:,5],:,1))
+
 # don't compute hessian etc. at all training data:
 n_full = size(input_train,1)
 n_tp = 100 # number train points
@@ -20,7 +36,6 @@ tp_idx = 1:skip:size(input_train,1)
 
 ##########
 
-FT = Float32
 input_dim = size(input_train,2)
 output_dim = size(truth,2)
 """
@@ -28,8 +43,26 @@ In theory this should be a log-posterior, here we take a quadratic cost function
 """
 log_likelihood(y, f, Σ_inv) = -0.5 * (y-f)' * Σ_inv * (y-f)
 
+instructions = """
+To build 100 samples, use the following:
+
+using Distributions, LinearAlgebra
+N_samples = 100
+Np = length(bson_data[:mean_vec])
+samples = bson_data[:mean_vec] .+ bson_data[:sqrt_cov_mat]*rand(MvNormal(zeros(Np),I), N_samples)
+# ps = reconstructor(samples[:,i]) gives the new network parameters
+
+====
+
+If the bson_data[:sqrt_cov_mat] is low rank, then it will need to have "+αI" with α<<1, for positive definiteness if it's square will be used in a `Distributions.jl` `MvNormal` distribution as a covariance.
+
+"""
+
+
 function main()
 
+
+    
     # case
     cases = [
         "indep-gauss",
@@ -39,6 +72,7 @@ function main()
     
     case = cases[3]
     
+    data_file= "prior_network_generator_$(case).bson"
     @info "Creating ensemble with method $(case)"
     
     n_samples = 100
@@ -52,8 +86,8 @@ function main()
         end
     end
     if case == "indep-gauss"
-        σ_w = FT(0.2) # will be later divided by layer width
-        σ_b = FT(0.2)
+        σ_w = FT(1) # will be later divided by layer width
+        σ_b = FT(1)
         hyperparams = (σ_w = σ_w, σ_b = σ_b)
         plt_mod = deepcopy(model_copies[1])
         for i in 1:n_samples
@@ -78,12 +112,16 @@ function main()
         
         hm = heatmap(Diagonal(flat_scales)', size=(1100,1000))
         savefig(hm, "cov_$(case).png")
-        
+
+        # save data
+        mean_vec = vec(params)
+        sqrt_cov_mat = Diagonal(sqrt.(flat_scales))
+        BSON.@save data_file mean_vec sqrt_cov_mat reconstructor instructions
         
     elseif case == "hess-gauss"
 
         # how to scale the hessian to create the ensemble
-        scale = FT(0.2)
+        scale = FT(1)
         noise_cov = I(output_dim)
         threshold = FT(1/1e3)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
@@ -132,10 +170,16 @@ function main()
                 layer.bias .= layer_tmp.bias
             end
         end
+
+        # save data
+        mean_vec = vec(flat_params)
+        sqrt_cov_mat = scale*sqrt_cov_mat
+        BSON.@save data_file mean_vec sqrt_cov_mat reconstructor instructions
+        
     elseif case == "laplace-gauss"
         # use the Generalized Gauss-Newton (Martens 20202) approximation of the hessian
 
-        noise_cov = 0.05*I # defines a scaling via the "noise" 
+        noise_cov = FT(1)*I # defines a scaling via the "noise" 
         H = inv(noise_cov)
         threshold = FT(1/1000)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
@@ -186,15 +230,20 @@ function main()
                 layer.bias .= layer_tmp.bias
             end
         end
+
+        # save data
+        mean_vec = vec(flat_params)
+        BSON.@save data_file mean_vec sqrt_cov_mat reconstructor instructions
+  
         
     end
 
     # save model ensemble
-    destructured_model_copies = [Flux.destructure(mc) for mc in model_copies]
-    @save "model_ensemble_$case.jld2" destructured_model_copies hyperparams
+    # destructured_model_copies = [Flux.destructure(mc) for mc in model_copies]
+    # @save "model_ensemble_$case.jld2" destructured_model_copies hyperparams
     
     # 7. Evaluate and visualize the result
-    n_plot = 5000 # number train points
+    n_plot = 1000 # number train points
     skip_plot = Int(ceil(size(input_train,1)/n_plot))
     plot_idx = 1:skip_plot:size(input_train,1)
 
@@ -221,30 +270,7 @@ function main()
     @info "max-min spread of ensemble, $spread_diff"
     
     # Plot the results
-    # PCA plots
-    svdy = svd(truth_plot') # So (U S^1/2) (S^1/2 V') are projections to the space where y data is N(0,1)
-    U, Sis, Vt = svdy.U, Diagonal(1 ./ sqrt.(svdy.S)), svdy.Vt
-    # Map into space where ydata is N(0,1) S^{-1/2} * U' * new_outputs * V * S^{-1/2}
-
-    # initial model projection
-    model_proj =  Sis * U' * model_plot * Vt' * Sis
-
-    # project ensemble
-    samples_proj = zeros(FT, n_samples, size(Sis)...)
-    for (id,mc) in enumerate(model_copies)
-        samples_proj[id,:,:] = Sis * U' * y_pred[id,:,:] * Vt' * Sis
-    end
-    
-    p = plot(1:length(svdy.S), ones(FT,length(svdy.S)), label="truth", lw=3, color=:blue)
-    # hcat makes column samples
-    plot!(p, 1:length(svdy.S), reduce(hcat, [diag(samples_proj[id,:,:]) for id in 1:size(samples_proj,1)]), label="", lw=2, color=:grey, alpha=0.3)
-    plot!(p, 1:length(svdy.S), diag(model_proj), label="MAP", lw=2, color=:black)
-    xlabel!("x")
-    ylabel!("y")
-    title!("DNN ensemble, PCA diagonal $(case)")
-    display(p)
-    savefig(p, "sampled_prior_projected_$(case).png")
-  
+    # ...
 end
 
 main()
