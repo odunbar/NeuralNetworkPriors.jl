@@ -19,3 +19,15 @@ and the following package setup:
   [37e2e46d] LinearAlgebra v1.11.0
   [9a3f8284] Random v1.11.0
 ```
+
+- Run by selecting the case of interest in `prior_from_offline_fit.jl` then
+```julia
+julia> include("prior_from_offline_fit.jl")
+```
+- Read outputs of case `CASE` by calling
+```julia
+julia> using BSON, Flux
+julia> bson_data = BSON.load("prior_network_generator_$(CASE).bson")
+julia> println(bson_data[:instructions])
+```
+
