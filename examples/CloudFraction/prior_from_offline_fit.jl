@@ -8,7 +8,8 @@ using JLD2 #(loading)
 using Plots
 using TSVD
 using BSON
-
+using CSV
+using DataFrames
 
 nn_filename = "cloud_fraction_NN_v1"
 if !isfile("$(nn_filename).bson")
@@ -70,7 +71,7 @@ function main()
         "laplace-gauss",
     ]
     
-    case = cases[3]
+    case = cases[1]
     
     data_file= "prior_network_generator_$(case).bson"
     @info "Creating ensemble with method $(case)"
