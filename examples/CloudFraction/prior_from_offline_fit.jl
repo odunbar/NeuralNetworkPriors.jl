@@ -11,6 +11,23 @@ using BSON
 using CSV
 using DataFrames
 
+FT = Float32
+
+# --------- #
+# Settings
+# --------- #
+
+cases = [
+    "indep-gauss",
+    "hess-gauss",
+    "laplace-gauss",
+]
+case = cases[2]
+
+scale = FT(.1) # scaling of the hessian-based covariance (used in "hess-gauss")
+
+# --------- #
+
 
 nn_filename = "cloud_fraction_NN_v3"
 if !isfile("$(nn_filename).bson")
@@ -22,9 +39,6 @@ else
     BSON.@load "$(nn_filename).bson" re params
 end
 model = re(params)
-
-FT = Float32
-
 
 df = CSV.read("sample_pi_groups.csv", DataFrame)
 input_train = FT.(Matrix(df)[:,1:4])
@@ -63,17 +77,6 @@ If the bson_data[:sqrt_cov_mat] is low rank, then it will need to have "+αI" wi
 
 function main()
 
-
-    
-    # case
-    cases = [
-        "indep-gauss",
-        "hess-gauss",
-        "laplace-gauss",
-    ]
-    
-    case = cases[2]
-    
     data_file= "prior_network_generator_$(case).bson"
     @info "Creating ensemble with method $(case)"
     
@@ -118,12 +121,11 @@ function main()
         # save data
         mean_vec = vec(params)
         sqrt_cov_mat = Diagonal(sqrt.(flat_scales))
+        @info "Saving prior to $(data_file)"
         BSON.@save data_file mean_vec sqrt_cov_mat reconstructor instructions
         
     elseif case == "hess-gauss"
 
-        # how to scale the hessian to create the ensemble
-        scale = FT(.1)
         noise_cov = I(output_dim)
         threshold = FT(1/1e3)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
@@ -176,6 +178,7 @@ function main()
         # save data
         mean_vec = vec(flat_params)
         sqrt_cov_mat = scale*sqrt_cov_mat
+        @info "Saving prior to $(data_file)"
         BSON.@save data_file mean_vec sqrt_cov_mat reconstructor instructions
         
     elseif case == "laplace-gauss"
@@ -235,6 +238,7 @@ function main()
 
         # save data
         mean_vec = vec(flat_params)
+        @info "Saving prior to $(data_file)"
         BSON.@save data_file mean_vec sqrt_cov_mat reconstructor instructions
   
         
