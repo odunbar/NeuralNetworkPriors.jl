@@ -24,7 +24,9 @@ cases = [
 ]
 case = cases[2]
 
-scale = FT(.1) # scaling of the hessian-based covariance (used in "hess-gauss")
+scale = FT(.04) # scaling of the hessian-based covariance (used in "hess-gauss")
+threshold = FT(1/1e3) # threshold for truncating the singular values of the hessian (used in "hess-gauss" and "laplace-gauss")
+n_tp = 400 # number train points
 
 # --------- #
 
@@ -46,7 +48,6 @@ truth = FT.(reshape(Matrix(df)[:,5],:,1))
 
 # don't compute hessian etc. at all training data:
 n_full = size(input_train,1)
-n_tp = 100 # number train points
 skip = Int(ceil(size(input_train,1)/n_tp))
 tp_idx = 1:skip:size(input_train,1)
 
@@ -84,11 +85,8 @@ function main()
     model_copies = [deepcopy(model) for i in 1:n_samples]
     
     function reconstruct_at_x(p,x)
-        if length(x) == 1
-            return reconstructor(p)([x])
-        else
-            return reconstructor(p)(x)
-        end
+        """Forward model pass at a given input x, with parameters p drawn from the prior. For cloud fraction, we clamp the output to [0,1]"""
+        return clamp.(reconstructor(p)(x), FT(0), FT(1)) # clamp to [0,1] for cloud fraction
     end
     if case == "indep-gauss"
         σ_w = FT(1) # will be later divided by layer width
@@ -120,14 +118,13 @@ function main()
 
         # save data
         mean_vec = vec(params)
-        sqrt_cov_mat = Diagonal(sqrt.(flat_scales))
+        sqrt_cov_mat = Diagonal(flat_scales)
         @info "Saving prior to $(data_file)"
         BSON.@save data_file mean_vec sqrt_cov_mat reconstructor instructions
         
     elseif case == "hess-gauss"
 
         noise_cov = I(output_dim)
-        threshold = FT(1/1e3)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
         noise_cov_inv = inv(noise_cov)
         
@@ -186,7 +183,6 @@ function main()
 
         noise_cov = FT(.1)*I # defines a scaling via the "noise" 
         H = inv(noise_cov)
-        threshold = FT(1/1000)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
         
         # get the gradient at the optimal value, at given points "x"
@@ -255,28 +251,37 @@ function main()
 
     x_plot = input_train[plot_idx,:]
     truth_plot = truth[plot_idx,:]
-    model_plot = model(reshape(x_plot,input_dim, :))
-    # predicts rows, then rotate so columns are different curves
-    y_pred = zeros(FT, n_samples, output_dim, size(x_plot,1))
-    for (id,mc) in enumerate(model_copies)
-        y_pred[id,:,:] = mc(reshape(x_plot,input_dim, :))
-    end
+    # ---------- diagnostics ----------
+    x_in = permutedims(x_plot)              # (input_dim × N)
+    t    = permutedims(truth_plot)          # (output_dim × N)
+    N    = size(x_in, 2)                    # ACTUAL count, not nominal n_plot
 
-    mse_ens = 1/(n_samples*n_plot*output_dim) * sum([norm(yp - truth_plot') for yp in eachslice(y_pred,dims=1)])
-    meanyp = mean(y_pred, dims=1)[1,:,:]
-    mse_mean = 1/(n_plot*output_dim) * norm(meanyp - truth_plot')
-    spread_ens = 1/(n_plot*output_dim) * [norm(yp - meanyp) for yp in eachslice(y_pred,dims=1)]
-    spread_mean = 1/(n_samples) * sum(spread_ens)
-    spread_diff = maximum(spread_ens) - minimum(spread_ens)
-    mse_model = 1/(n_plot*output_dim) * norm(model_plot - truth_plot')
-    @info "mean-MSE over ensemble $mse_ens"
-    @info "MSE of ensemble-mean, $mse_mean"
-    @info "MSE of model, $mse_model"
-    @info "average spread of ensemble, $spread_mean"
-    @info "max-min spread of ensemble, $spread_diff"
+    rms(A) = norm(A) / sqrt(length(A))      # per-element RMS
+
+    model_plot = clamp.(model(x_in), 0, 1)
+    y_pred = zeros(FT, n_samples, output_dim, N)
+    for (id, mc) in enumerate(model_copies)
+        y_pred[id, :, :] = clamp.(mc(x_in), 0, 1)
+    end
+    ybar = dropdims(mean(y_pred, dims=1), dims=1)
+
+    σ_t         = std(vec(t))
+    rmse_model  = rms(model_plot .- t)
+    rmse_mean   = rms(ybar .- t)
+    rmse_ens    = mean(rms(yp .- t)  for yp in eachslice(y_pred, dims=1))
+    spread_ens  = [rms(yp .- ybar)   for yp in eachslice(y_pred, dims=1)]
+    spread_mean = mean(spread_ens)
+    r           = (maximum(spread_ens) - minimum(spread_ens)) / spread_mean
+
+    @info "N=$N  std(truth)=$(σ_t)"
+    @info "RMSE  model=$(rmse_model)  ens-mean=$(rmse_mean)  members=$(rmse_ens)"
+    @info "skill (1-MSE/var)  model=$(1-(rmse_model/σ_t)^2)  ens-mean=$(1-(rmse_mean/σ_t)^2)"
+    @info "spread=$(spread_mean)  spread/RMSE=$(spread_mean/rmse_model)  [target ~1]"
+    @info "dispersion (max-min)/mean=$(r)  [target $(5/sqrt(2K))]  d_eff≈$(25/(2r^2)) of K=$K"
     
     # Plot the results
     # ...
+    # Main.@infiltrate
 end
 
 main()
