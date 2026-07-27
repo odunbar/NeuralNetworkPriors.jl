@@ -22,12 +22,16 @@ cases = [
     "hess-gauss",
     "laplace-gauss",
 ]
-case = cases[2]
+case = cases[3]
 
-scale = FT(.04) # scaling of the hessian-based covariance (used in "hess-gauss")
+# scales for the linear case 
+σ_w = FT(0.015) # will be later divided by layer width
+σ_b = FT(0.015)
+hess_scale = FT(.04) # scaling of the hessian-based covariance (used in "hess-gauss")
+laplace_scale = FT(.0015) # scaling of the laplace-based covariance (used in "laplace-gauss")
+
 threshold = FT(1/1e3) # threshold for truncating the singular values of the hessian (used in "hess-gauss" and "laplace-gauss")
-n_tp = 400 # number train points
-
+n_tp = 400 # number of training points to use for computing the hessian (used in "hess-gauss" and "laplace-gauss"). Max 1000 (limited by sample csv size).
 # --------- #
 
 
@@ -88,9 +92,8 @@ function main()
         """Forward model pass at a given input x, with parameters p drawn from the prior. For cloud fraction, we clamp the output to [0,1]"""
         return clamp.(reconstructor(p)(x), FT(0), FT(1)) # clamp to [0,1] for cloud fraction
     end
+    # Loop through each of the possible cases for generating the prior distribution
     if case == "indep-gauss"
-        σ_w = FT(1) # will be later divided by layer width
-        σ_b = FT(1)
         hyperparams = (σ_w = σ_w, σ_b = σ_b)
         plt_mod = deepcopy(model_copies[1])
         for i in 1:n_samples
@@ -112,6 +115,7 @@ function main()
         end
 
         flat_scales, reconstructor = Flux.destructure(plt_mod)
+        K = length(flat_scales) # full rank diagonal prior
         
         hm = heatmap(Diagonal(flat_scales)', size=(1100,1000))
         savefig(hm, "cov_$(case).png")
@@ -161,7 +165,7 @@ function main()
         # sample
         sqrt_cov_mat = svdh.U[:,1:K]*Diagonal(1 ./ sqrt.(svdh.S[1:K])) * svdh.Vt[1:K,:]
         
-        samples = flat_params .+ scale*sqrt_cov_mat*rand(MvNormal(zeros(Np),I), n_samples)
+        samples = flat_params .+ hess_scale*sqrt_cov_mat*rand(MvNormal(zeros(Np),I), n_samples)
         
         for i in 1:n_samples
             mod = model_copies[i]
@@ -174,14 +178,13 @@ function main()
 
         # save data
         mean_vec = vec(flat_params)
-        sqrt_cov_mat = scale*sqrt_cov_mat
+        sqrt_cov_mat = hess_scale*sqrt_cov_mat
         @info "Saving prior to $(data_file)"
         BSON.@save data_file mean_vec sqrt_cov_mat reconstructor instructions
         
     elseif case == "laplace-gauss"
         # use the Generalized Gauss-Newton (Martens 20202) approximation of the hessian
-
-        noise_cov = FT(.1)*I # defines a scaling via the "noise" 
+        noise_cov = laplace_scale*I # defines a scaling via the "noise" 
         H = inv(noise_cov)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
         

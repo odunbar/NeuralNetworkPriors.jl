@@ -1,5 +1,5 @@
 # Cloud Fraction EKI Prior
-This example produces a prior distribution for online calibration of a cloud fraction closure in `CliMAAtmos.jl`. Version 3 of the network is a 121 parameter 3 layer neural network that map 4 non-dimensional pi groups encoding distance to saturation and variance in temperature and specific humidity space to a 1-dimensional cloud fraction. For now, the script is set up to use the hessian approach to computing uncertainty for the parameters. The scale has been tuned so that the spread/RMSE ratio is roughly 1. This may need adjusting if the network changes. 
+This example produces a prior distribution for online calibration of a cloud fraction closure in `CliMAAtmos.jl`. Version 3 of the network is a 121 parameter 3 layer neural network that map 4 non-dimensional pi groups encoding distance to saturation and variance in temperature and specific humidity space to a 1-dimensional cloud fraction. The scale has been tuned so that the spread/RMSE ratio is roughly 1 for each of the 3 prior generation methods. This may need adjusting if the network or training data changes, and can be done so in the settings section of the script. 
 
 ## Known to work with
 `Julia 1.11.5`
