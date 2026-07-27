@@ -8,9 +8,11 @@ using JLD2 #(loading)
 using Plots
 using TSVD
 using BSON
+using CSV
+using DataFrames
 
 
-nn_filename = "cloud_fraction_NN_v1"
+nn_filename = "cloud_fraction_NN_v3"
 if !isfile("$(nn_filename).bson")
     jld2data = JLD2.load("$(nn_filename).jld2") # give re, params,
     re = jld2data["re"]
@@ -70,7 +72,7 @@ function main()
         "laplace-gauss",
     ]
     
-    case = cases[3]
+    case = cases[2]
     
     data_file= "prior_network_generator_$(case).bson"
     @info "Creating ensemble with method $(case)"
@@ -121,7 +123,7 @@ function main()
     elseif case == "hess-gauss"
 
         # how to scale the hessian to create the ensemble
-        scale = FT(1)
+        scale = FT(.1)
         noise_cov = I(output_dim)
         threshold = FT(1/1e3)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
@@ -179,7 +181,7 @@ function main()
     elseif case == "laplace-gauss"
         # use the Generalized Gauss-Newton (Martens 20202) approximation of the hessian
 
-        noise_cov = FT(1)*I # defines a scaling via the "noise" 
+        noise_cov = FT(.1)*I # defines a scaling via the "noise" 
         H = inv(noise_cov)
         threshold = FT(1/1000)
         hyperparams = (noise_cov = noise_cov, threshold = threshold)
