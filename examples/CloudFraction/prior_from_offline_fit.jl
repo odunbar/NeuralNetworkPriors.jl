@@ -281,10 +281,6 @@ function main()
     @info "skill (1-MSE/var)  model=$(1-(rmse_model/σ_t)^2)  ens-mean=$(1-(rmse_mean/σ_t)^2)"
     @info "spread=$(spread_mean)  spread/RMSE=$(spread_mean/rmse_model)  [target ~1]"
     @info "dispersion (max-min)/mean=$(r)  [target $(5/sqrt(2K))]  d_eff≈$(25/(2r^2)) of K=$K"
-    
-    # Plot the results
-    # ...
-    # Main.@infiltrate
 end
 
 main()
