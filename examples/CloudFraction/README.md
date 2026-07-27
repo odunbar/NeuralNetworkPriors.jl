@@ -11,6 +11,7 @@ and the following package setup:
   [31c24e10] Distributions v0.25.122
   [587475ba] Flux v0.16.5
   [033835bb] JLD2 v0.6.3
+  [b964fa9f] LaTeXStrings v1.4.0
   [85f8d34a] NCDatasets v0.14.10
   [91a5bcdd] Plots v1.41.2
   [92933f4c] ProgressMeter v1.11.0

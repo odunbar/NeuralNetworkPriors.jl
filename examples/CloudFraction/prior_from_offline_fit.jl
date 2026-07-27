@@ -6,6 +6,7 @@ using Flux
 using Zygote
 using JLD2 #(loading)
 using Plots
+using LaTeXStrings
 using TSVD
 using BSON
 using CSV
@@ -23,6 +24,12 @@ cases = [
     "laplace-gauss",
 ]
 case = cases[3]
+
+case_titles = Dict(
+    "indep-gauss" => "Independent Gaussian",
+    "hess-gauss" => "Hessian Gaussian",
+    "laplace-gauss" => "Laplace Gaussian",
+)
 
 # scales for the linear case 
 σ_w = FT(0.015) # will be later divided by layer width
@@ -90,6 +97,7 @@ function main()
     
     function reconstruct_at_x(p,x)
         """Forward model pass at a given input x, with parameters p drawn from the prior. For cloud fraction, we clamp the output to [0,1]"""
+        # note that clamp destroys gradient information, but values outside [0, 1] are unphysical for cloud fraction, so we don't want to propagate them anyway
         return clamp.(reconstructor(p)(x), FT(0), FT(1)) # clamp to [0,1] for cloud fraction
     end
     # Loop through each of the possible cases for generating the prior distribution
@@ -286,7 +294,17 @@ function main()
     # Since we have multiple samples, sweep each pi input over its observed range
     # (holding the other three fixed at their mean) and overlay the cloud-fraction
     # curve from every ensemble member, to see how the prior's spread propagates.
-    pi_names = ["pi1", "pi2", "pi3", "pi4"]
+    # NOTE: holding the other three inputs at their marginal mean is a one-at-a-time
+    # (OAT) sweep -- it evaluates the model at a synthetic "average" point that may
+    # sit outside the region of the input space with real data support, so a nonzero
+    # baseline (e.g. pi4 -> 0) reflects the model's response to the other three inputs
+    # sitting at their mean, not necessarily a physical floor for pi4 alone.
+    pi_labels = [
+        L"Distance to Saturation in $\theta_{li}$ Space (K)",
+        L"Distance to Saturation in $q_t$ Space (kg kg$^{-1}$)",
+        L"Normalized Variance in $q_t$ Space",
+        L"Normalized Variance in $\theta_{li}$ Space",
+    ]
     pi_fixed = vec(mean(input_train, dims=1)) # hold non-swept inputs at their mean
     n_sweep = 100
 
@@ -297,7 +315,7 @@ function main()
         x_sweep = repeat(pi_fixed, 1, n_sweep) # (input_dim x n_sweep)
         x_sweep[d,:] .= pi_range
 
-        p = plot(title=pi_names[d], xlabel=pi_names[d], ylabel="cloud fraction", legend=false)
+        p = plot(xlabel=pi_labels[d], ylabel="cloud fraction", legend=false, margin=5Plots.mm)
         for mc in model_copies
             y_sweep = clamp.(vec(mc(x_sweep)), 0, 1)
             plot!(p, pi_range, y_sweep, color=:steelblue, alpha=0.15, lw=1)
@@ -307,8 +325,11 @@ function main()
         p
     end
 
-    sweep_fig = plot(sweep_plots..., layout=(2,2), size=(1200,900))
-    savefig(sweep_fig, "sensitivity_$(case).png")
+    sweep_fig = plot(sweep_plots..., layout=(2,2), size=(1200,900), plot_title=case_titles[case])
+    savefig(sweep_fig, "sensitivity_$(case).pdf")
 end
 
-main()
+for c in cases
+    global case = c
+    main()
+end
