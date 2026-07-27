@@ -281,6 +281,34 @@ function main()
     @info "skill (1-MSE/var)  model=$(1-(rmse_model/σ_t)^2)  ens-mean=$(1-(rmse_mean/σ_t)^2)"
     @info "spread=$(spread_mean)  spread/RMSE=$(spread_mean/rmse_model)  [target ~1]"
     @info "dispersion (max-min)/mean=$(r)  [target $(5/sqrt(2K))]  d_eff≈$(25/(2r^2)) of K=$K"
+
+    # Plot uncertainty in cloud fraction predictions that the prior generates.
+    # Since we have multiple samples, sweep each pi input over its observed range
+    # (holding the other three fixed at their mean) and overlay the cloud-fraction
+    # curve from every ensemble member, to see how the prior's spread propagates.
+    pi_names = ["pi1", "pi2", "pi3", "pi4"]
+    pi_fixed = vec(mean(input_train, dims=1)) # hold non-swept inputs at their mean
+    n_sweep = 100
+
+    sweep_plots = map(1:input_dim) do d
+        lo, hi = extrema(input_train[:,d])
+        pi_range = range(lo, hi, length=n_sweep)
+
+        x_sweep = repeat(pi_fixed, 1, n_sweep) # (input_dim x n_sweep)
+        x_sweep[d,:] .= pi_range
+
+        p = plot(title=pi_names[d], xlabel=pi_names[d], ylabel="cloud fraction", legend=false)
+        for mc in model_copies
+            y_sweep = clamp.(vec(mc(x_sweep)), 0, 1)
+            plot!(p, pi_range, y_sweep, color=:steelblue, alpha=0.15, lw=1)
+        end
+        y_model = clamp.(vec(model(x_sweep)), 0, 1)
+        plot!(p, pi_range, y_model, color=:black, lw=2)
+        p
+    end
+
+    sweep_fig = plot(sweep_plots..., layout=(2,2), size=(1200,900))
+    savefig(sweep_fig, "sensitivity_$(case).png")
 end
 
 main()
